@@ -38,7 +38,7 @@ const allowedOrigins = [
   'http://localhost:5173',
   'https://residencialoasis.netlify.app',
   'https://front-oasis.vercel.app',
-  'https://frontoasis-production.up.railway.app/'
+  'https://fix-oasis-residents.vercel.app/'
 ];
 
 app.use(
