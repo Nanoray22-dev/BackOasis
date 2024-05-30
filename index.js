@@ -34,16 +34,24 @@ app.use(bodyParser.json());
 app.use("/uploads", express.static(__dirname + "/uploads"));
 app.use(express.json());
 app.use(cookieParser());
-// const allowedOrigins = [
-//   'http://localhost:5173',
-//   'https://residencialoasis.netlify.app',
-//   'https://front-oasis.vercel.app'
-// ];
+const allowedOrigins = [
+  'http://localhost:5173',
+  'https://residencialoasis.netlify.app',
+  'https://front-oasis.vercel.app'
+];
 
-app.use(cors({
-  origin: 'https://front-oasis.vercel.app', 
-  credentials: true
-}));
+app.use(
+  cors({
+    credentials: true,
+    origin: function (origin, callback) {
+      if (allowedOrigins.indexOf(origin) !== -1 || !origin) {
+        callback(null, true);
+      } else {
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
+  })
+);
 
 const server = app.listen(process.env.PORT);
 const io = socketIo(server);
