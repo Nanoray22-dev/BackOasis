@@ -37,7 +37,8 @@ app.use(cookieParser());
 const allowedOrigins = [
   'http://localhost:5173',
   'https://residencialoasis.netlify.app',
-  'https://front-oasis.vercel.app'
+  'https://front-oasis.vercel.app',
+  'https://frontoasis-production.up.railway.app/'
 ];
 
 app.use(
@@ -381,15 +382,13 @@ app.get("/report/:id", async (req, res) => {
   }
 });
 
-app.post("/report", upload.single("image"), async (req, res) => {
+app.post("/report", upload.array("image"), async (req, res) => {
   try {
     const { title, description, state, incidentDate } = req.body;
-
-    let imagePath = null;
-    if (req.file) {
-      imagePath = req.file.path;
+    let imagePaths = [];
+    if (req.files) {
+      imagePaths = req.files.map(file => file.path);
     }
-
     const token = req.cookies?.token;
     if (!token) {
       return res.status(401).json({ error: "User not authenticated" });
@@ -401,7 +400,7 @@ app.post("/report", upload.single("image"), async (req, res) => {
       title,
       description,
       state,
-      image: imagePath,
+      images: imagePaths, // Asegúrate de que el campo sea images y no image
       incidentDate,
       createdBy: userId,
       createdAt: new Date(),
@@ -410,20 +409,24 @@ app.post("/report", upload.single("image"), async (req, res) => {
     const reportWithDetails = {
       ...newReport.toObject(),
       createdBy: (await User.findById(userId)).username,
-      image: imagePath ? `${baseUrl}${imagePath}` : null,
+      images: imagePaths.map(path => `${baseUrl}${path}`), // Asegúrate de manejar correctamente las URLs de las imágenes
     };
 
     notifyAllClients({ type: "new-report", data: reportWithDetails });
 
     res.status(201).json(reportWithDetails);
   } catch (error) {
-    console.error(error);
-    if (req.file) {
-      fs.unlinkSync(req.file.path);
+    console.error("Error creating report:", error); // Mejora el log de errores
+
+    if (req.files) {
+      req.files.forEach(file => fs.unlinkSync(file.path));
     }
+    
     res.status(500).json({ error: "Error creating report" });
   }
 });
+
+
 
 app.delete("/report/:id", async (req, res) => {
   try {
