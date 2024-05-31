@@ -35,10 +35,8 @@ app.use("/uploads", express.static(__dirname + "/uploads"));
 app.use(express.json());
 app.use(cookieParser());
 const allowedOrigins = [
-  'http://localhost:5173',
-  'https://residencialoasis.netlify.app',
-  'https://front-oasis.vercel.app',
-  'https://fix-oasis-residents.vercel.app/'
+  "http://localhost:5173",
+  "https://fix-oasis-residents.vercel.app/",
 ];
 
 app.use(
@@ -48,7 +46,7 @@ app.use(
       if (allowedOrigins.indexOf(origin) !== -1 || !origin) {
         callback(null, true);
       } else {
-        callback(new Error('Not allowed by CORS'));
+        callback(new Error("Not allowed by CORS"));
       }
     },
   })
@@ -56,9 +54,6 @@ app.use(
 
 const server = app.listen(process.env.PORT);
 const io = socketIo(server);
-
-
-
 
 async function getUserDataFromRequest(req) {
   return new Promise((resolve, reject) => {
@@ -176,7 +171,6 @@ app.post("/logout", (req, res) => {
 const wss = new ws.WebSocketServer({ server });
 
 wss.on("connection", (socket) => {
-
   socket.on("close", () => {
     console.log("Cliente desconectado");
   });
@@ -189,7 +183,6 @@ const notifyAllClients = (message) => {
     }
   });
 };
-
 
 wss.on("connection", (connection, req) => {
   function notifyAboutOnlinePeople() {
@@ -387,7 +380,7 @@ app.post("/report", upload.array("image"), async (req, res) => {
     const { title, description, state, incidentDate } = req.body;
     let imagePaths = [];
     if (req.files) {
-      imagePaths = req.files.map(file => file.path);
+      imagePaths = req.files.map((file) => file.path);
     }
     const token = req.cookies?.token;
     if (!token) {
@@ -409,7 +402,7 @@ app.post("/report", upload.array("image"), async (req, res) => {
     const reportWithDetails = {
       ...newReport.toObject(),
       createdBy: (await User.findById(userId)).username,
-      images: imagePaths.map(path => `${baseUrl}${path}`), // Asegúrate de manejar correctamente las URLs de las imágenes
+      images: imagePaths.map((path) => `${baseUrl}${path}`), // Asegúrate de manejar correctamente las URLs de las imágenes
     };
 
     notifyAllClients({ type: "new-report", data: reportWithDetails });
@@ -419,20 +412,18 @@ app.post("/report", upload.array("image"), async (req, res) => {
     console.error("Error creating report:", error); // Mejora el log de errores
 
     if (req.files) {
-      req.files.forEach(file => fs.unlinkSync(file.path));
+      req.files.forEach((file) => fs.unlinkSync(file.path));
     }
-    
+
     res.status(500).json({ error: "Error creating report" });
   }
 });
-
-
 
 app.delete("/report/:id", async (req, res) => {
   try {
     const reportId = req.params.id;
     await Report.findByIdAndDelete(reportId);
-    notifyAllClients({ type: "delete-report", reportId});
+    notifyAllClients({ type: "delete-report", reportId });
     res.status(200).json({ message: "Report deleted successfully" });
   } catch (error) {
     console.error("Error deleting report:", error);
@@ -471,8 +462,7 @@ app.put("/report/:id", async (req, res) => {
       image: updatedReport.image ? `${baseUrl}${updatedReport.image}` : null,
     };
 
-    notifyAllClients({ type: "update-report", reportWithDetails});
-
+    notifyAllClients({ type: "update-report", reportWithDetails });
 
     res.status(200).json(reportWithDetails);
   } catch (error) {
@@ -498,7 +488,6 @@ app.post("/assign-report/:reportId", async (req, res) => {
     res.status(500).json({ error: "Error asignando informe" });
   }
 });
-
 
 app.put("/mark-report-reviewed/:reportId", async (req, res) => {
   try {
@@ -548,7 +537,10 @@ app.post("/report/:id/comment", async (req, res) => {
     const newComment = report.comments[report.comments.length - 1];
     newComment.createdBy = user;
 
-    notifyAllClients({ type: "new-comment", data: { reportId, comment: newComment } });
+    notifyAllClients({
+      type: "new-comment",
+      data: { reportId, comment: newComment },
+    });
 
     res.status(201).json(newComment);
   } catch (error) {
