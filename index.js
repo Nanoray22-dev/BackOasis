@@ -26,6 +26,7 @@ mongoose
   .catch((err) => {
     console.error("Error al conectar con la base de datos:", err);
   });
+
 const jwtSecret = process.env.JWT_SECRET;
 const bcryptSalt = bcrypt.genSaltSync(10);
 
@@ -34,9 +35,10 @@ app.use(bodyParser.json());
 app.use("/uploads", express.static(__dirname + "/uploads"));
 app.use(express.json());
 app.use(cookieParser());
+
 const allowedOrigins = [
   "http://localhost:5173",
-  "https://fix-oasis-residents.vercel.app/",
+  "https://fix-oasis-residents.vercel.app"
 ];
 
 app.use(
@@ -386,7 +388,7 @@ app.post("/report", upload.array("image"), async (req, res) => {
     if (!token) {
       return res.status(401).json({ error: "User not authenticated" });
     }
-    const decodedToken = jwt.verify(token, process.env.JWT_SECRET);
+    const decodedToken = jwt.verify(token, jwtSecret);
     const userId = decodedToken.userId;
 
     const newReport = await Report.create({
