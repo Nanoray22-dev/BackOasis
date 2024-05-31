@@ -388,7 +388,7 @@ app.post("/report", upload.array("image"), async (req, res) => {
     if (!token) {
       return res.status(401).json({ error: "User not authenticated" });
     }
-    const decodedToken = jwt.verify(token, jwtSecret);
+    const decodedToken = jwt.verify(token, process.env.JWT_SECRET);
     const userId = decodedToken.userId;
 
     const newReport = await Report.create({
@@ -404,14 +404,14 @@ app.post("/report", upload.array("image"), async (req, res) => {
     const reportWithDetails = {
       ...newReport.toObject(),
       createdBy: (await User.findById(userId)).username,
-      images: imagePaths.map((path) => `${baseUrl}${path}`), // Asegúrate de manejar correctamente las URLs de las imágenes
+      images: imagePaths.map((path) => `${baseUrl}${path}`),
     };
 
     notifyAllClients({ type: "new-report", data: reportWithDetails });
 
     res.status(201).json(reportWithDetails);
   } catch (error) {
-    console.error("Error creating report:", error); // Mejora el log de errores
+    console.error("Error creating report:", error); 
 
     if (req.files) {
       req.files.forEach((file) => fs.unlinkSync(file.path));
