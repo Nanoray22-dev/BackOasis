@@ -325,17 +325,17 @@ app.post("/report", upload.array("image"), async (req, res) => {
 
     console.log("User ID:", userId);
 
-    const existingReport = await Report.findOne({
-      title: title.trim(),
-      description: description.trim(),
-      incidentDate: new Date(incidentDate),
-      createdBy: userId,
-    });
+    // const existingReport = await Report.findOne({
+    //   title: title.trim(),
+    //   description: description.trim(),
+    //   incidentDate: new Date(incidentDate),
+    //   createdBy: userId,
+    // });
 
-    if (existingReport) {
-      console.log("Duplicate report found.");
-      return res.status(400).json({ error: "Duplicate report submission" });
-    }
+    // if (existingReport) {
+    //   console.log("Duplicate report found.");
+    //   return res.status(400).json({ error: "Duplicate report submission" });
+    // }
 
     const newReport = await Report.create({
       title: title.trim(),
