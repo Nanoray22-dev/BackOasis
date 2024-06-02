@@ -40,13 +40,13 @@ app.use("/uploads", express.static(__dirname + "/uploads"));
 app.use(express.json());
 app.use(cookieParser());
 
-  // Servir archivos estáticos desde la carpeta 'build'
-  app.use(express.static(path.join(__dirname, 'Frontend')));
+  // // Servir archivos estáticos desde la carpeta 'build'
+  // app.use(express.static(path.join(__dirname, 'Frontend')));
 
-  // Manejar todas las solicitudes y enviar el archivo index.html
-  app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, 'build', 'index.html'));
-  });
+  // // Manejar todas las solicitudes y enviar el archivo index.html
+  // app.get('*', (req, res) => {
+  //   res.sendFile(path.join(__dirname, 'build', 'index.html'));
+  // });
 
 
 const allowedOrigins = [
