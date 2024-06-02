@@ -384,19 +384,33 @@ app.post("/report", upload.array("image"), async (req, res) => {
     if (req.files) {
       imagePaths = req.files.map((file) => file.path);
     }
+
     const token = req.cookies?.token;
     if (!token) {
       return res.status(401).json({ error: "User not authenticated" });
     }
+
     const decodedToken = jwt.verify(token, process.env.JWT_SECRET);
     const userId = decodedToken.userId;
 
+    // Check for existing report to prevent duplicates
+    const existingReport = await Report.findOne({
+      title: title.trim(),
+      description: description.trim(),
+      incidentDate: new Date(incidentDate),
+      createdBy: userId,
+    });
+
+    if (existingReport) {
+      return res.status(400).json({ error: "Duplicate report submission" });
+    }
+
     const newReport = await Report.create({
-      title,
-      description,
+      title: title.trim(),
+      description: description.trim(),
       state,
-      images: imagePaths, // Asegúrate de que el campo sea images y no image
-      incidentDate,
+      images: imagePaths,
+      incidentDate: new Date(incidentDate),
       createdBy: userId,
       createdAt: new Date(),
     });
@@ -411,7 +425,7 @@ app.post("/report", upload.array("image"), async (req, res) => {
 
     res.status(201).json(reportWithDetails);
   } catch (error) {
-    console.error("Error creating report:", error); 
+    console.error("Error creating report:", error);
 
     if (req.files) {
       req.files.forEach((file) => fs.unlinkSync(file.path));
