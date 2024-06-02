@@ -283,6 +283,7 @@ wss.on("connection", (connection, req) => {
 // iniciando la parte del reporte //
 
 
+
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
     cb(null, "./uploads/");
@@ -295,7 +296,6 @@ const storage = multer.diskStorage({
 const upload = multer({ storage: storage });
 const baseUrl = process.env.BASE_URL || 'http://localhost:4040';
 
-
 app.post("/report", upload.array("image"), async (req, res) => {
   try {
     const { title, description, state, incidentDate } = req.body;
@@ -305,7 +305,6 @@ app.post("/report", upload.array("image"), async (req, res) => {
       imagePaths = req.files.map((file) => file.path);
     }
 
-    // Debug: Log incoming data
     console.log("Incoming data:", { title, description, state, incidentDate, imagePaths });
 
     const token = req.cookies?.token;
@@ -324,10 +323,8 @@ app.post("/report", upload.array("image"), async (req, res) => {
 
     const userId = decodedToken.userId;
 
-    // Debug: Log user ID
     console.log("User ID:", userId);
 
-    // Check for existing report to prevent duplicates
     const existingReport = await Report.findOne({
       title: title.trim(),
       description: description.trim(),
@@ -356,7 +353,6 @@ app.post("/report", upload.array("image"), async (req, res) => {
       images: imagePaths.map((path) => `${baseUrl}/${path}`),
     };
 
-    // Debug: Log the new report
     console.log("New Report:", reportWithDetails);
 
     notifyAllClients({ type: "new-report", data: reportWithDetails });
