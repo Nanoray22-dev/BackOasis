@@ -341,7 +341,7 @@ app.post("/report", upload.array("image"), async (req, res) => {
       title: title.trim(),
       description: description.trim(),
       state,
-      images: imagePaths,
+      image: imagePaths,
       incidentDate: new Date(incidentDate),
       createdBy: userId,
       createdAt: new Date(),
