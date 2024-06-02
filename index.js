@@ -323,7 +323,6 @@ app.post("/report", upload.array("image"), async (req, res) => {
 
     const userId = decodedToken.userId;
 
-    console.log("User ID:", userId);
 
     const newReport = await Report.create({
       title: title.trim(),
@@ -341,14 +340,13 @@ app.post("/report", upload.array("image"), async (req, res) => {
       images: imagePaths.map((path) => `${baseUrl}/${path}`),
     };
 
-    console.log("New Report:", reportWithDetails);
+
 
     notifyAllClients({ type: "new-report", data: reportWithDetails });
 
     res.status(201).json(reportWithDetails);
   } catch (error) {
     if (error.code === 11000 && error.keyPattern.title && error.keyPattern.description && error.keyPattern.incidentDate && error.keyPattern.createdBy) {
-      console.log("Duplicate report found.");
       return res.status(400).json({ error: "Duplicate report submission" });
     }
     console.error("Error creating report:", error);
