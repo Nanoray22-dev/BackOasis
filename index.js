@@ -17,6 +17,8 @@ const bodyParser = require("body-parser");
 const socketIo = require("socket.io");
 const ObjectId = mongoose.Types.ObjectId;
 
+
+
 dotenv.config();
 mongoose
   .connect(process.env.MONGO_URL)
@@ -26,6 +28,9 @@ mongoose
   .catch((err) => {
     console.error("Error al conectar con la base de datos:", err);
   });
+
+  // Servir archivos estáticos desde la carpeta 'build'
+
 
 const jwtSecret = process.env.JWT_SECRET;
 const bcryptSalt = bcrypt.genSaltSync(10);
@@ -55,6 +60,13 @@ app.use(
     },
   })
 );
+
+app.use(express.static(path.join(__dirname, 'build')));
+
+// Manejar todas las solicitudes y enviar el archivo index.html
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'build', 'index.html'));
+});
 
 const server = app.listen(process.env.PORT);
 const io = socketIo(server);
