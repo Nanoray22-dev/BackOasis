@@ -61,12 +61,7 @@ app.use(
   })
 );
 
-app.use(express.static(path.join(__dirname, 'build')));
 
-// Manejar todas las solicitudes y enviar el archivo index.html
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'build', 'index.html'));
-});
 
 const server = app.listen(process.env.PORT);
 const io = socketIo(server);
