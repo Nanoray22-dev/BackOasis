@@ -381,17 +381,32 @@ app.post("/report", upload.array("image"), async (req, res) => {
   try {
     const { title, description, state, incidentDate } = req.body;
     let imagePaths = [];
+
     if (req.files) {
       imagePaths = req.files.map((file) => file.path);
     }
 
+    // Debug: Log incoming data
+    console.log("Incoming data:", { title, description, state, incidentDate, imagePaths });
+
     const token = req.cookies?.token;
     if (!token) {
+      console.log("No token provided.");
       return res.status(401).json({ error: "User not authenticated" });
     }
 
-    const decodedToken = jwt.verify(token, process.env.JWT_SECRET);
+    let decodedToken;
+    try {
+      decodedToken = jwt.verify(token, process.env.JWT_SECRET);
+    } catch (err) {
+      console.log("Invalid token:", err.message);
+      return res.status(401).json({ error: "Invalid token" });
+    }
+
     const userId = decodedToken.userId;
+
+    // Debug: Log user ID
+    console.log("User ID:", userId);
 
     // Check for existing report to prevent duplicates
     const existingReport = await Report.findOne({
@@ -402,6 +417,7 @@ app.post("/report", upload.array("image"), async (req, res) => {
     });
 
     if (existingReport) {
+      console.log("Duplicate report found.");
       return res.status(400).json({ error: "Duplicate report submission" });
     }
 
@@ -418,8 +434,11 @@ app.post("/report", upload.array("image"), async (req, res) => {
     const reportWithDetails = {
       ...newReport.toObject(),
       createdBy: (await User.findById(userId)).username,
-      images: imagePaths.map((path) => `${baseUrl}${path}`),
+      images: imagePaths.map((path) => `${baseUrl}/${path}`),
     };
+
+    // Debug: Log the new report
+    console.log("New Report:", reportWithDetails);
 
     notifyAllClients({ type: "new-report", data: reportWithDetails });
 
@@ -428,7 +447,13 @@ app.post("/report", upload.array("image"), async (req, res) => {
     console.error("Error creating report:", error);
 
     if (req.files) {
-      req.files.forEach((file) => fs.unlinkSync(file.path));
+      req.files.forEach((file) => {
+        try {
+          fs.unlinkSync(file.path);
+        } catch (unlinkError) {
+          console.error("Error removing file:", file.path, unlinkError);
+        }
+      });
     }
 
     res.status(500).json({ error: "Error creating report" });
