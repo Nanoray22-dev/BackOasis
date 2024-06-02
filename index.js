@@ -325,18 +325,6 @@ app.post("/report", upload.array("image"), async (req, res) => {
 
     console.log("User ID:", userId);
 
-    const existingReport = await Report.findOne({
-      title: title.trim(),
-      description: description.trim(),
-      incidentDate: new Date(incidentDate),
-      createdBy: userId,
-    });
-
-    if (existingReport) {
-      console.log("Duplicate report found.");
-      return res.status(400).json({ error: "Duplicate report submission" });
-    }
-
     const newReport = await Report.create({
       title: title.trim(),
       description: description.trim(),
@@ -359,6 +347,10 @@ app.post("/report", upload.array("image"), async (req, res) => {
 
     res.status(201).json(reportWithDetails);
   } catch (error) {
+    if (error.code === 11000 && error.keyPattern.title && error.keyPattern.description && error.keyPattern.incidentDate && error.keyPattern.createdBy) {
+      console.log("Duplicate report found.");
+      return res.status(400).json({ error: "Duplicate report submission" });
+    }
     console.error("Error creating report:", error);
 
     if (req.files) {
@@ -374,6 +366,7 @@ app.post("/report", upload.array("image"), async (req, res) => {
     res.status(500).json({ error: "Error creating report" });
   }
 });
+
 
 
 
