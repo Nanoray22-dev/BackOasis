@@ -29,6 +29,8 @@ mongoose
 
 const jwtSecret = process.env.JWT_SECRET;
 const bcryptSalt = bcrypt.genSaltSync(10);
+const { Resend } = require("resend");
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 const app = express();
 app.use(bodyParser.json());
@@ -280,6 +282,7 @@ wss.on("connection", (connection, req) => {
 ////////////////////////////////////
 // iniciando la parte del reporte //
 
+
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
     cb(null, "./uploads/");
@@ -290,9 +293,92 @@ const storage = multer.diskStorage({
 });
 
 const upload = multer({ storage: storage });
-const baseUrl = process.env.BASE_URL;
-const { Resend } = require("resend");
-const resend = new Resend(process.env.RESEND_API_KEY);
+const baseUrl = process.env.BASE_URL || 'http://localhost:4040';
+
+
+app.post("/report", upload.array("image"), async (req, res) => {
+  try {
+    const { title, description, state, incidentDate } = req.body;
+    let imagePaths = [];
+
+    if (req.files) {
+      imagePaths = req.files.map((file) => file.path);
+    }
+
+    // Debug: Log incoming data
+    console.log("Incoming data:", { title, description, state, incidentDate, imagePaths });
+
+    const token = req.cookies?.token;
+    if (!token) {
+      console.log("No token provided.");
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    let decodedToken;
+    try {
+      decodedToken = jwt.verify(token, process.env.JWT_SECRET);
+    } catch (err) {
+      console.log("Invalid token:", err.message);
+      return res.status(401).json({ error: "Invalid token" });
+    }
+
+    const userId = decodedToken.userId;
+
+    // Debug: Log user ID
+    console.log("User ID:", userId);
+
+    // Check for existing report to prevent duplicates
+    const existingReport = await Report.findOne({
+      title: title.trim(),
+      description: description.trim(),
+      incidentDate: new Date(incidentDate),
+      createdBy: userId,
+    });
+
+    if (existingReport) {
+      console.log("Duplicate report found.");
+      return res.status(400).json({ error: "Duplicate report submission" });
+    }
+
+    const newReport = await Report.create({
+      title: title.trim(),
+      description: description.trim(),
+      state,
+      images: imagePaths,
+      incidentDate: new Date(incidentDate),
+      createdBy: userId,
+      createdAt: new Date(),
+    });
+
+    const reportWithDetails = {
+      ...newReport.toObject(),
+      createdBy: (await User.findById(userId)).username,
+      images: imagePaths.map((path) => `${baseUrl}/${path}`),
+    };
+
+    // Debug: Log the new report
+    console.log("New Report:", reportWithDetails);
+
+    notifyAllClients({ type: "new-report", data: reportWithDetails });
+
+    res.status(201).json(reportWithDetails);
+  } catch (error) {
+    console.error("Error creating report:", error);
+
+    if (req.files) {
+      req.files.forEach((file) => {
+        try {
+          fs.unlinkSync(file.path);
+        } catch (unlinkError) {
+          console.error("Error removing file:", file.path, unlinkError);
+        }
+      });
+    }
+
+    res.status(500).json({ error: "Error creating report" });
+  }
+});
+
 
 app.get("/report", async (req, res) => {
   try {
@@ -377,88 +463,7 @@ app.get("/report/:id", async (req, res) => {
   }
 });
 
-app.post("/report", upload.array("image"), async (req, res) => {
-  try {
-    const { title, description, state, incidentDate } = req.body;
-    let imagePaths = [];
 
-    if (req.files) {
-      imagePaths = req.files.map((file) => file.path);
-    }
-
-    // Debug: Log incoming data
-    console.log("Incoming data:", { title, description, state, incidentDate, imagePaths });
-
-    const token = req.cookies?.token;
-    if (!token) {
-      console.log("No token provided.");
-      return res.status(401).json({ error: "User not authenticated" });
-    }
-
-    let decodedToken;
-    try {
-      decodedToken = jwt.verify(token, process.env.JWT_SECRET);
-    } catch (err) {
-      console.log("Invalid token:", err.message);
-      return res.status(401).json({ error: "Invalid token" });
-    }
-
-    const userId = decodedToken.userId;
-
-    // Debug: Log user ID
-    console.log("User ID:", userId);
-
-    // Check for existing report to prevent duplicates
-    const existingReport = await Report.findOne({
-      title: title.trim(),
-      description: description.trim(),
-      incidentDate: new Date(incidentDate),
-      createdBy: userId,
-    });
-
-    if (existingReport) {
-      console.log("Duplicate report found.");
-      return res.status(400).json({ error: "Duplicate report submission" });
-    }
-
-    const newReport = await Report.create({
-      title: title.trim(),
-      description: description.trim(),
-      state,
-      images: imagePaths,
-      incidentDate: new Date(incidentDate),
-      createdBy: userId,
-      createdAt: new Date(),
-    });
-
-    const reportWithDetails = {
-      ...newReport.toObject(),
-      createdBy: (await User.findById(userId)).username,
-      images: imagePaths.map((path) => `${baseUrl}/${path}`),
-    };
-
-    // Debug: Log the new report
-    console.log("New Report:", reportWithDetails);
-
-    notifyAllClients({ type: "new-report", data: reportWithDetails });
-
-    res.status(201).json(reportWithDetails);
-  } catch (error) {
-    console.error("Error creating report:", error);
-
-    if (req.files) {
-      req.files.forEach((file) => {
-        try {
-          fs.unlinkSync(file.path);
-        } catch (unlinkError) {
-          console.error("Error removing file:", file.path, unlinkError);
-        }
-      });
-    }
-
-    res.status(500).json({ error: "Error creating report" });
-  }
-});
 
 app.delete("/report/:id", async (req, res) => {
   try {
