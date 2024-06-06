@@ -12,42 +12,29 @@ const ws = require("ws");
 const fs = require("fs");
 const multer = require("multer");
 const path = require("path");
-const axios = require("axios");
 const bodyParser = require("body-parser");
 const socketIo = require("socket.io");
 const ObjectId = mongoose.Types.ObjectId;
 
 dotenv.config();
+
 mongoose
   .connect(process.env.MONGO_URL)
   .then(() => {
-    console.log("Conexión exitosa con la base de datos");
+    console.log("Connected to the database successfully");
   })
   .catch((err) => {
-    console.error("Error al conectar con la base de datos:", err);
+    console.error("Error connecting to the database:", err);
   });
-
-
 
 const jwtSecret = process.env.JWT_SECRET;
 const bcryptSalt = bcrypt.genSaltSync(10);
-const { Resend } = require("resend");
-const resend = new Resend(process.env.RESEND_API_KEY);
 
 const app = express();
 app.use(bodyParser.json());
 app.use("/uploads", express.static(__dirname + "/uploads"));
 app.use(express.json());
 app.use(cookieParser());
-
-  // // Servir archivos estáticos desde la carpeta 'build'
-  // app.use(express.static(path.join(__dirname, 'Frontend')));
-
-  // // Manejar todas las solicitudes y enviar el archivo index.html
-  // app.get('*', (req, res) => {
-  //   res.sendFile(path.join(__dirname, 'build', 'index.html'));
-  // });
-
 
 const allowedOrigins = [
   "http://localhost:5173",
@@ -79,7 +66,7 @@ async function getUserDataFromRequest(req) {
         resolve(userData);
       });
     } else {
-      reject("no token");
+      reject("No token");
     }
   });
 }
@@ -88,20 +75,61 @@ app.get("/", (req, res) => {
   res.json("test ok");
 });
 
-app.get("/messages/:userId", async (req, res) => {
-  const { userId } = req.params;
-  const userData = await getUserDataFromRequest(req);
-  const ourUserId = userData.userId;
-  const messages = await Message.find({
-    sender: { $in: [userId, ourUserId] },
-    recipient: { $in: [userId, ourUserId] },
-  }).sort({ createdAt: 1 });
-  res.json(messages);
+app.post("/login", async (req, res) => {
+  const { username, password } = req.body;
+  const foundUser = await User.findOne({ username });
+  if (foundUser) {
+    const passOk = bcrypt.compareSync(password, foundUser.password);
+    if (passOk) {
+      jwt.sign(
+        { userId: foundUser._id, username, role: foundUser.role },
+        jwtSecret,
+        {},
+        (err, token) => {
+          if (err) {
+            res.status(500).json({ message: "Error generating token" });
+          } else {
+            res
+              .cookie("token", token, { sameSite: "None", secure: true })
+              .json({ id: foundUser._id, role: foundUser.role });
+          }
+        }
+      );
+    } else {
+      res.status(401).json({ message: "Incorrect credentials" });
+    }
+  } else {
+    res.status(404).json({ message: "User not found" });
+  }
 });
 
-app.get("/people", async (req, res) => {
-  const users = await User.find({}, { _id: 1, username: 1 });
-  res.json(users);
+app.post("/register", async (req, res) => {
+  const { username, password } = req.body;
+  try {
+    const hashedPassword = bcrypt.hashSync(password, bcryptSalt);
+    const createdUser = await User.create({ username, password: hashedPassword });
+    jwt.sign(
+      { userId: createdUser._id, username },
+      jwtSecret,
+      {},
+      (err, token) => {
+        if (err) {
+          res.status(500).json({ message: "Token error" });
+        } else {
+          res
+            .cookie("token", token, { sameSite: "None", secure: true })
+            .status(201)
+            .json({ id: createdUser._id });
+        }
+      }
+    );
+  } catch (err) {
+    res.status(500).json({ message: "Error registering user" });
+  }
+});
+
+app.post("/logout", (req, res) => {
+  res.cookie("token", "", { sameSite: "None", secure: true }).json("ok");
 });
 
 app.get("/profile", (req, res) => {
@@ -112,82 +140,17 @@ app.get("/profile", (req, res) => {
       res.json(userData);
     });
   } else {
-    res.status(401).json("no token");
+    res.status(401).json("No token");
   }
 });
 
-app.post("/login", async (req, res) => {
-  const { username, password } = req.body;
-  const foundUser = await User.findOne({ username });
-  if (foundUser) {
-    const passOk = bcrypt.compareSync(password, foundUser.password);
-    if (passOk) {
-      jwt.sign(
-        { userId: foundUser._id, username, role: foundUser.role }, // Incluir el rol del usuario en el payload
-        jwtSecret,
-        {},
-        (err, token) => {
-          if (err) {
-            res
-              .status(500)
-              .json({ message: "Error en la generación del token" });
-          } else {
-            res
-              .cookie("token", token, { sameSite: "none", secure: true })
-              .json({
-                id: foundUser._id,
-                role: foundUser.role,
-              });
-          }
-        }
-      );
-    } else {
-      res.status(401).json({ message: "Credencials incorrect" });
-    }
-  } else {
-    res.status(404).json({ message: "User no found" });
-  }
-});
 
-app.post("/register", async (req, res) => {
-  const { username, password } = req.body;
-  try {
-    const hashedPassword = bcrypt.hashSync(password, bcryptSalt);
-    const createdUser = await User.create({
-      username: username,
-      password: hashedPassword,
-    });
-    jwt.sign(
-      { userId: createdUser._id, username },
-      jwtSecret,
-      {},
-      (err, token) => {
-        if (err) {
-          res.status(500).json({ message: "Token Error" });
-        } else {
-          res
-            .cookie("token", token, { sameSite: "none", secure: true })
-            .status(201)
-            .json({
-              id: createdUser._id,
-            });
-        }
-      }
-    );
-  } catch (err) {
-    res.status(500).json({ message: "Error to register the user" });
-  }
-});
-
-app.post("/logout", (req, res) => {
-  res.cookie("token", "", { sameSite: "none", secure: true }).json("ok");
-});
 
 const wss = new ws.WebSocketServer({ server });
 
 wss.on("connection", (socket) => {
   socket.on("close", () => {
-    console.log("Cliente desconectado");
+    console.log("Client disconnected");
   });
 });
 
