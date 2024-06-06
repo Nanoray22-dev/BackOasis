@@ -5,77 +5,55 @@ const dotenv = require("dotenv");
 const jwt = require("jsonwebtoken");
 const cors = require("cors");
 const bcrypt = require("bcryptjs");
-const User = require("./Models/User");
-const Message = require("./Models/Message");
-const Report = require("./Models/Report");
 const ws = require("ws");
 const fs = require("fs");
 const multer = require("multer");
 const path = require("path");
-const axios = require("axios");
 const bodyParser = require("body-parser");
 const socketIo = require("socket.io");
-const ObjectId = mongoose.Types.ObjectId;
+const { Resend } = require("resend");
+
+const User = require("./Models/User");
+const Message = require("./Models/Message");
+const Report = require("./Models/Report");
 
 dotenv.config();
-mongoose
-  .connect(process.env.MONGO_URL)
-  .then(() => {
-    console.log("Conexión exitosa con la base de datos");
-  })
-  .catch((err) => {
-    console.error("Error al conectar con la base de datos:", err);
-  });
-
-
+mongoose.connect(process.env.MONGO_URL)
+  .then(() => console.log("Conexión exitosa con la base de datos"))
+  .catch(err => console.error("Error al conectar con la base de datos:", err));
 
 const jwtSecret = process.env.JWT_SECRET;
 const bcryptSalt = bcrypt.genSaltSync(10);
-const { Resend } = require("resend");
 const resend = new Resend(process.env.RESEND_API_KEY);
 
 const app = express();
 app.use(bodyParser.json());
-app.use("/uploads", express.static(__dirname + "/uploads"));
+app.use("/uploads", express.static(path.join(__dirname, "/uploads")));
 app.use(express.json());
 app.use(cookieParser());
 
-  // // Servir archivos estáticos desde la carpeta 'build'
-  // app.use(express.static(path.join(__dirname, 'Frontend')));
-
-  // // Manejar todas las solicitudes y enviar el archivo index.html
-  // app.get('*', (req, res) => {
-  //   res.sendFile(path.join(__dirname, 'build', 'index.html'));
-  // });
-
-
-const allowedOrigins = [
-  "http://localhost:5173",
-  "https://fix-oasis-residents.vercel.app"
-];
-
-app.use(
-  cors({
-    credentials: true,
-    origin: function (origin, callback) {
-      if (allowedOrigins.indexOf(origin) !== -1 || !origin) {
-        callback(null, true);
-      } else {
-        callback(new Error("Not allowed by CORS"));
-      }
-    },
-  })
-);
+const allowedOrigins = ["http://localhost:5173", "https://fix-oasis-residents.vercel.app"];
+app.use(cors({
+  credentials: true,
+  origin: function (origin, callback) {
+    if (allowedOrigins.indexOf(origin) !== -1 || !origin) {
+      callback(null, true);
+    } else {
+      callback(new Error("Not allowed by CORS"));
+    }
+  },
+}));
 
 const server = app.listen(process.env.PORT);
 const io = socketIo(server);
 
+// Helper function to get user data from request
 async function getUserDataFromRequest(req) {
   return new Promise((resolve, reject) => {
     const token = req.cookies?.token;
     if (token) {
       jwt.verify(token, jwtSecret, {}, (err, userData) => {
-        if (err) throw err;
+        if (err) reject(err);
         resolve(userData);
       });
     } else {
@@ -84,9 +62,8 @@ async function getUserDataFromRequest(req) {
   });
 }
 
-app.get("/", (req, res) => {
-  res.json("test ok");
-});
+// Routes
+app.get("/", (req, res) => res.json("test ok"));
 
 app.get("/messages/:userId", async (req, res) => {
   const { userId } = req.params;
@@ -123,29 +100,24 @@ app.post("/login", async (req, res) => {
     const passOk = bcrypt.compareSync(password, foundUser.password);
     if (passOk) {
       jwt.sign(
-        { userId: foundUser._id, username, role: foundUser.role }, // Incluir el rol del usuario en el payload
+        { userId: foundUser._id, username, role: foundUser.role },
         jwtSecret,
         {},
         (err, token) => {
-          if (err) {
-            res
-              .status(500)
-              .json({ message: "Error en la generación del token" });
-          } else {
-            res
-              .cookie("token", token, { sameSite: "none", secure: true })
-              .json({
-                id: foundUser._id,
-                role: foundUser.role,
-              });
+          if (err) res.status(500).json({ message: "Error en la generación del token" });
+          else {
+            res.cookie("token", token, { sameSite: "none", secure: true }).json({
+              id: foundUser._id,
+              role: foundUser.role,
+            });
           }
         }
       );
     } else {
-      res.status(401).json({ message: "Credencials incorrect" });
+      res.status(401).json({ message: "Credenciales incorrectas" });
     }
   } else {
-    res.status(404).json({ message: "User no found" });
+    res.status(404).json({ message: "Usuario no encontrado" });
   }
 });
 
@@ -162,20 +134,16 @@ app.post("/register", async (req, res) => {
       jwtSecret,
       {},
       (err, token) => {
-        if (err) {
-          res.status(500).json({ message: "Token Error" });
-        } else {
-          res
-            .cookie("token", token, { sameSite: "none", secure: true })
-            .status(201)
-            .json({
-              id: createdUser._id,
-            });
+        if (err) res.status(500).json({ message: "Error en la generación del token" });
+        else {
+          res.cookie("token", token, { sameSite: "none", secure: true }).status(201).json({
+            id: createdUser._id,
+          });
         }
       }
     );
   } catch (err) {
-    res.status(500).json({ message: "Error to register the user" });
+    res.status(500).json({ message: "Error al registrar el usuario" });
   }
 });
 
@@ -183,6 +151,7 @@ app.post("/logout", (req, res) => {
   res.cookie("token", "", { sameSite: "none", secure: true }).json("ok");
 });
 
+// WebSocket setup
 const wss = new ws.WebSocketServer({ server });
 
 wss.on("connection", (socket) => {
@@ -229,12 +198,9 @@ wss.on("connection", (connection, req) => {
     clearTimeout(connection.deathTimer);
   });
 
-  // read username and id form the cookie for this connection
   const cookies = req.headers.cookie;
   if (cookies) {
-    const tokenCookieString = cookies
-      .split(";")
-      .find((str) => str.startsWith("token="));
+    const tokenCookieString = cookies.split(";").find((str) => str.startsWith("token="));
     if (tokenCookieString) {
       const token = tokenCookieString.split("=")[1];
       if (token) {
@@ -253,14 +219,13 @@ wss.on("connection", (connection, req) => {
     const { recipient, text, file } = messageData;
     let filename = null;
     if (file) {
-      console.log("size", file.data.length);
       const parts = file.name.split(".");
       const ext = parts[parts.length - 1];
       filename = Date.now() + "." + ext;
-      const path = __dirname + "/uploads/" + filename;
-      const bufferData = new Buffer(file.data.split(",")[1], "base64");
-      fs.writeFile(path, bufferData, () => {
-        console.log("file saved:" + path);
+      const filePath = path.join(__dirname, "/uploads/", filename);
+      const bufferData = Buffer.from(file.data.split(",")[1], "base64");
+      fs.writeFile(filePath, bufferData, () => {
+        console.log("file saved:" + filePath);
       });
     }
     if (recipient && (text || file)) {
@@ -286,15 +251,10 @@ wss.on("connection", (connection, req) => {
     }
   });
 
-  // notify everyone about online people (when someone connects)
   notifyAboutOnlinePeople();
 });
 
-////////////////////////////////////
-// iniciando la parte del reporte //
-
-
-
+// Report handling setup
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
     cb(null, "./uploads/");
@@ -307,6 +267,75 @@ const storage = multer.diskStorage({
 const upload = multer({ storage: storage });
 const baseUrl = process.env.BASE_URL || 'http://localhost:4040';
 
+// app.post("/report", upload.array("image"), async (req, res) => {
+//   try {
+//     const { title, description, state, incidentDate } = req.body;
+//     let imagePaths = [];
+
+//     if (req.files) {
+//       imagePaths = req.files.map((file) => file.path);
+//     }
+
+//     console.log("Incoming data:", { title, description, state, incidentDate, imagePaths });
+
+//     const token = req.cookies?.token;
+//     if (!token) {
+//       console.log("No token provided.");
+//       return res.status(401).json({ error: "User not authenticated" });
+//     }
+
+//     let decodedToken;
+//     try {
+//       decodedToken = jwt.verify(token, process.env.JWT_SECRET);
+//     } catch (err) {
+//       console.log("Invalid token:", err.message);
+//       return res.status(401).json({ error: "Invalid token" });
+//     }
+
+//     const userId = decodedToken.userId;
+
+
+//     const newReport = await Report.create({
+//       title: title.trim(),
+//       description: description.trim(),
+//       state,
+//       image: imagePaths,
+//       incidentDate: new Date(incidentDate),
+//       createdBy: userId,
+//       createdAt: new Date(),
+//     });
+
+//     const reportWithDetails = {
+//       ...newReport.toObject(),
+//       createdBy: (await User.findById(userId)).username,
+//       images: imagePaths.map((path) => `${baseUrl}/${path}`),
+//     };
+
+
+
+//     notifyAllClients({ type: "new-report", data: reportWithDetails });
+
+//     res.status(201).json(reportWithDetails);
+//   } catch (error) {
+//     if (error.code === 11000 && error.keyPattern.title && error.keyPattern.description && error.keyPattern.incidentDate && error.keyPattern.createdBy) {
+//       return res.status(400).json({ error: "Duplicate report submission" });
+//     }
+//     console.error("Error creating report:", error);
+
+//     if (req.files) {
+//       req.files.forEach((file) => {
+//         try {
+//           fs.unlinkSync(file.path);
+//         } catch (unlinkError) {
+//           console.error("Error removing file:", file.path, unlinkError);
+//         }
+//       });
+//     }
+
+//     res.status(500).json({ error: "Error creating report" });
+//   }
+// });
+
 app.post("/report", upload.array("image"), async (req, res) => {
   try {
     const { title, description, state, incidentDate } = req.body;
@@ -316,66 +345,62 @@ app.post("/report", upload.array("image"), async (req, res) => {
       imagePaths = req.files.map((file) => file.path);
     }
 
-    console.log("Incoming data:", { title, description, state, incidentDate, imagePaths });
-
     const token = req.cookies?.token;
     if (!token) {
-      console.log("No token provided.");
       return res.status(401).json({ error: "User not authenticated" });
     }
 
     let decodedToken;
     try {
-      decodedToken = jwt.verify(token, process.env.JWT_SECRET);
+      decodedToken = jwt.verify(token, jwtSecret);
     } catch (err) {
-      console.log("Invalid token:", err.message);
       return res.status(401).json({ error: "Invalid token" });
     }
 
     const userId = decodedToken.userId;
-
 
     const newReport = await Report.create({
       title: title.trim(),
       description: description.trim(),
       state,
       image: imagePaths,
-      incidentDate: new Date(incidentDate),
-      createdBy: userId,
-      createdAt: new Date(),
+      incidentDate,
+      user: userId,
     });
 
-    const reportWithDetails = {
-      ...newReport.toObject(),
-      createdBy: (await User.findById(userId)).username,
-      images: imagePaths.map((path) => `${baseUrl}/${path}`),
-    };
+    io.emit("newReport", newReport);
 
+    res.status(201).json({ message: "Report submitted successfully" });
 
+    const recipients = ["raysell22@gmail.com"];
 
-    notifyAllClients({ type: "new-report", data: reportWithDetails });
-
-    res.status(201).json(reportWithDetails);
-  } catch (error) {
-    if (error.code === 11000 && error.keyPattern.title && error.keyPattern.description && error.keyPattern.incidentDate && error.keyPattern.createdBy) {
-      return res.status(400).json({ error: "Duplicate report submission" });
-    }
-    console.error("Error creating report:", error);
-
-    if (req.files) {
-      req.files.forEach((file) => {
-        try {
-          fs.unlinkSync(file.path);
-        } catch (unlinkError) {
-          console.error("Error removing file:", file.path, unlinkError);
-        }
+    for (const recipient of recipients) {
+      await resend.emails.send({
+        from: "oasis@centromantenimineto.com",
+        to: recipient,
+        subject: `New Report - ${newReport.title}`,
+        html: `
+          <h1>New Report Submitted</h1>
+          <p><strong>Title:</strong> ${newReport.title}</p>
+          <p><strong>Description:</strong> ${newReport.description}</p>
+          <p><strong>State:</strong> ${newReport.state}</p>
+          <p><strong>Incident Date:</strong> ${newReport.incidentDate}</p>
+          <p><strong>Submitted by:</strong> ${userId}</p>
+          ${
+            imagePaths.length > 0
+              ? `<p><strong>Images:</strong> ${imagePaths
+                  .map((path) => `<img src="${baseUrl}/${path}" alt="Image" />`)
+                  .join("")}</p>`
+              : ""
+          }
+        `,
       });
     }
-
-    res.status(500).json({ error: "Error creating report" });
+  } catch (err) {
+    console.error("Error submitting report:", err);
+    res.status(500).json({ error: "Internal server error" });
   }
 });
-
 
 
 
