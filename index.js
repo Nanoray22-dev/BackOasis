@@ -366,6 +366,8 @@ app.post("/report", upload.array("image"), async (req, res) => {
       image: imagePaths,
       incidentDate,
       user: userId,
+      createdBy: userId,
+      createdAt: new Date()
     });
 
     io.emit("newReport", newReport);
