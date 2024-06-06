@@ -267,75 +267,6 @@ const storage = multer.diskStorage({
 const upload = multer({ storage: storage });
 const baseUrl = process.env.BASE_URL || 'http://localhost:4040';
 
-// app.post("/report", upload.array("image"), async (req, res) => {
-//   try {
-//     const { title, description, state, incidentDate } = req.body;
-//     let imagePaths = [];
-
-//     if (req.files) {
-//       imagePaths = req.files.map((file) => file.path);
-//     }
-
-//     console.log("Incoming data:", { title, description, state, incidentDate, imagePaths });
-
-//     const token = req.cookies?.token;
-//     if (!token) {
-//       console.log("No token provided.");
-//       return res.status(401).json({ error: "User not authenticated" });
-//     }
-
-//     let decodedToken;
-//     try {
-//       decodedToken = jwt.verify(token, process.env.JWT_SECRET);
-//     } catch (err) {
-//       console.log("Invalid token:", err.message);
-//       return res.status(401).json({ error: "Invalid token" });
-//     }
-
-//     const userId = decodedToken.userId;
-
-
-//     const newReport = await Report.create({
-//       title: title.trim(),
-//       description: description.trim(),
-//       state,
-//       image: imagePaths,
-//       incidentDate: new Date(incidentDate),
-//       createdBy: userId,
-//       createdAt: new Date(),
-//     });
-
-//     const reportWithDetails = {
-//       ...newReport.toObject(),
-//       createdBy: (await User.findById(userId)).username,
-//       images: imagePaths.map((path) => `${baseUrl}/${path}`),
-//     };
-
-
-
-//     notifyAllClients({ type: "new-report", data: reportWithDetails });
-
-//     res.status(201).json(reportWithDetails);
-//   } catch (error) {
-//     if (error.code === 11000 && error.keyPattern.title && error.keyPattern.description && error.keyPattern.incidentDate && error.keyPattern.createdBy) {
-//       return res.status(400).json({ error: "Duplicate report submission" });
-//     }
-//     console.error("Error creating report:", error);
-
-//     if (req.files) {
-//       req.files.forEach((file) => {
-//         try {
-//           fs.unlinkSync(file.path);
-//         } catch (unlinkError) {
-//           console.error("Error removing file:", file.path, unlinkError);
-//         }
-//       });
-//     }
-
-//     res.status(500).json({ error: "Error creating report" });
-//   }
-// });
-
 app.post("/report", upload.array("image"), async (req, res) => {
   try {
     const { title, description, state, incidentDate } = req.body;
@@ -345,34 +276,46 @@ app.post("/report", upload.array("image"), async (req, res) => {
       imagePaths = req.files.map((file) => file.path);
     }
 
+    console.log("Incoming data:", { title, description, state, incidentDate, imagePaths });
+
     const token = req.cookies?.token;
     if (!token) {
+      console.log("No token provided.");
       return res.status(401).json({ error: "User not authenticated" });
     }
 
     let decodedToken;
     try {
-      decodedToken = jwt.verify(token, jwtSecret);
+      decodedToken = jwt.verify(token, process.env.JWT_SECRET);
     } catch (err) {
+      console.log("Invalid token:", err.message);
       return res.status(401).json({ error: "Invalid token" });
     }
 
     const userId = decodedToken.userId;
+
 
     const newReport = await Report.create({
       title: title.trim(),
       description: description.trim(),
       state,
       image: imagePaths,
-      incidentDate,
-      user: userId,
+      incidentDate: new Date(incidentDate),
       createdBy: userId,
-      createdAt: new Date()
+      createdAt: new Date(),
     });
 
-    io.emit("newReport", newReport);
+    const reportWithDetails = {
+      ...newReport.toObject(),
+      createdBy: (await User.findById(userId)).username,
+      images: imagePaths.map((path) => `${baseUrl}/${path}`),
+    };
 
-    res.status(201).json({ message: "Report submitted successfully" });
+
+
+    notifyAllClients({ type: "new-report", data: reportWithDetails });
+
+    res.status(201).json(reportWithDetails);
 
     const recipients = ["raysell22@gmail.com"];
 
@@ -398,11 +341,93 @@ app.post("/report", upload.array("image"), async (req, res) => {
         `,
       });
     }
-  } catch (err) {
-    console.error("Error submitting report:", err);
-    res.status(500).json({ error: "Internal server error" });
+  } catch (error) {
+    if (error.code === 11000 && error.keyPattern.title && error.keyPattern.description && error.keyPattern.incidentDate && error.keyPattern.createdBy) {
+      return res.status(400).json({ error: "Duplicate report submission" });
+    }
+    console.error("Error creating report:", error);
+
+    if (req.files) {
+      req.files.forEach((file) => {
+        try {
+          fs.unlinkSync(file.path);
+        } catch (unlinkError) {
+          console.error("Error removing file:", file.path, unlinkError);
+        }
+      });
+    }
+
+    res.status(500).json({ error: "Error creating report" });
   }
 });
+
+// app.post("/report", upload.array("image"), async (req, res) => {
+//   try {
+//     const { title, description, state, incidentDate } = req.body;
+//     let imagePaths = [];
+
+//     if (req.files) {
+//       imagePaths = req.files.map((file) => file.path);
+//     }
+
+//     const token = req.cookies?.token;
+//     if (!token) {
+//       return res.status(401).json({ error: "User not authenticated" });
+//     }
+
+//     let decodedToken;
+//     try {
+//       decodedToken = jwt.verify(token, jwtSecret);
+//     } catch (err) {
+//       return res.status(401).json({ error: "Invalid token" });
+//     }
+
+//     const userId = decodedToken.userId;
+
+//     const newReport = await Report.create({
+//       title: title.trim(),
+//       description: description.trim(),
+//       state,
+//       image: imagePaths,
+//       incidentDate,
+//       user: userId,
+//       createdBy: userId,
+//       createdAt: new Date()
+//     });
+
+//     io.emit("newReport", newReport);
+
+//     res.status(201).json({ message: "Report submitted successfully" });
+
+//     const recipients = ["raysell22@gmail.com"];
+
+//     for (const recipient of recipients) {
+//       await resend.emails.send({
+//         from: "oasis@centromantenimineto.com",
+//         to: recipient,
+//         subject: `New Report - ${newReport.title}`,
+//         html: `
+//           <h1>New Report Submitted</h1>
+//           <p><strong>Title:</strong> ${newReport.title}</p>
+//           <p><strong>Description:</strong> ${newReport.description}</p>
+//           <p><strong>State:</strong> ${newReport.state}</p>
+//           <p><strong>Incident Date:</strong> ${newReport.incidentDate}</p>
+//           <p><strong>Submitted by:</strong> ${userId}</p>
+//           ${
+//             imagePaths.length > 0
+//               ? `<p><strong>Images:</strong> ${imagePaths
+//                   .map((path) => `<img src="${baseUrl}/${path}" alt="Image" />`)
+//                   .join("")}</p>`
+//               : ""
+//           }
+//         `,
+//       });
+//     }
+//   } catch (err) {
+//     console.error("Error submitting report:", err);
+//     res.status(500).json({ error: "Internal server error" });
+//   }
+// });
 
 
 
