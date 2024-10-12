@@ -1,5 +1,6 @@
 const express = require("express");
-const mongoose = require("mongoose");
+// const mongoose = require("mongoose");
+// const { Sequelize, DataTypes } = require("sequelize");
 const cookieParser = require("cookie-parser");
 const dotenv = require("dotenv");
 const jwt = require("jsonwebtoken");
@@ -12,15 +13,52 @@ const path = require("path");
 const bodyParser = require("body-parser");
 const socketIo = require("socket.io");
 const { Resend } = require("resend");
-
 const User = require("./Models/User");
 const Message = require("./Models/Message");
-const Report = require("./Models/Report");
+// const Report = require('./Models/Report');
+// const Comment = require('./Models/Comments');
+const { Report, Comment } = require('./Models/associations');
+const { Sequelize } = require("sequelize");
+const { format } = require("date-fns");
 
 dotenv.config();
-mongoose.connect(process.env.MONGO_URL)
-  .then(() => console.log("Conexión exitosa con la base de datos"))
-  .catch(err => console.error("Error al conectar con la base de datos:", err));
+// Configuración de Sequelize para SQL Server
+const sequelize = new Sequelize(process.env.SQL_DATABASE, process.env.SQL_USER, process.env.SQL_PASSWORD, {
+  host: process.env.SQL_HOST,
+  dialect: 'mssql',
+  port: process.env.SQL_PORT || 1433,
+  logging: false,
+  dialectOptions: {
+    options: {
+      encrypt: true,
+    },
+  },
+});
+
+// Probar la conexión a la base de datos
+(async () => {
+  try {
+    await sequelize.authenticate();
+    console.log('Conexión exitosa a SQL Server');
+  } catch (error) {
+    console.error('Error de conexión a SQL Server:', error);
+  }
+})();
+
+// Sincronizar los modelos
+// Probar la conexión y sincronizar los modelos
+(async () => {
+  try {
+    await sequelize.authenticate();
+    console.log('Conexión a la base de datos exitosa');
+    
+    // Sincronizar los modelos, crea las tablas si no existen
+    await sequelize.sync({ force: true });  // Cambia a `force: true` para recrear tablas
+    console.log('Tablas sincronizadas correctamente');
+  } catch (error) {
+    console.error('Error al sincronizar los modelos:', error);
+  }
+})();
 
 const jwtSecret = process.env.JWT_SECRET;
 const bcryptSalt = bcrypt.genSaltSync(10);
@@ -32,7 +70,7 @@ app.use("/uploads", express.static(path.join(__dirname, "/uploads")));
 app.use(express.json());
 app.use(cookieParser());
 
-const allowedOrigins = ["http://localhost:5173", "https://fix-oasis-residents.vercel.app"];
+const allowedOrigins = ["http://localhost:5173"];
 app.use(cors({
   credentials: true,
   origin: function (origin, callback) {
@@ -47,17 +85,41 @@ app.use(cors({
 const server = app.listen(process.env.PORT);
 const io = socketIo(server);
 
-// Helper function to get user data from request
+const authenticateJWT = async (req, res, next) => {
+  try {
+    const token = req.cookies?.token;
+    if (!token) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    const decodedToken = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = await User.findByPk(decodedToken.userId);  // Attach the user to the request
+
+    if (!req.user) {
+      return res.status(401).json({ error: "User not found" });
+    }
+
+    next();
+  } catch (error) {
+    console.error("Authentication error:", error);
+    return res.status(401).json({ error: "Authentication failed" });
+  }
+};
+
+// Helper para obtener los datos del usuario desde la solicitud
 async function getUserDataFromRequest(req) {
   return new Promise((resolve, reject) => {
     const token = req.cookies?.token;
     if (token) {
-      jwt.verify(token, jwtSecret, {}, (err, userData) => {
-        if (err) reject(err);
+      jwt.verify(token, process.env.JWT_SECRET, (err, userData) => {
+        if (err) {
+          console.error("Error verifying token:", err);
+          reject(new Error("Invalid token"));
+        }
         resolve(userData);
       });
     } else {
-      reject("no token");
+      reject(new Error("No token provided"));
     }
   });
 }
@@ -69,7 +131,7 @@ app.get("/messages/:userId", async (req, res) => {
   const { userId } = req.params;
   const userData = await getUserDataFromRequest(req);
   const ourUserId = userData.userId;
-  const messages = await Message.find({
+  const messages = await Message.findAll({
     sender: { $in: [userId, ourUserId] },
     recipient: { $in: [userId, ourUserId] },
   }).sort({ createdAt: 1 });
@@ -77,7 +139,7 @@ app.get("/messages/:userId", async (req, res) => {
 });
 
 app.get("/people", async (req, res) => {
-  const users = await User.find({}, { _id: 1, username: 1 });
+  const users = await User.findAll({}, { _id: 1, username: 1 });
   res.json(users);
 });
 
@@ -89,61 +151,75 @@ app.get("/profile", (req, res) => {
       res.json(userData);
     });
   } else {
-    res.status(401).json("no token");
+    res.status(401).json("No se ha proporcionado token");
   }
 });
 
 app.post("/login", async (req, res) => {
   const { username, password } = req.body;
-  const foundUser = await User.findOne({ username });
-  if (foundUser) {
+  try {
+    const foundUser = await User.findOne({ where: { username } });  // SQL Server query
+    if (!foundUser) {
+      return res.status(404).json({ message: "Usuario no encontrado" });
+    }
+
     const passOk = bcrypt.compareSync(password, foundUser.password);
     if (passOk) {
       jwt.sign(
-        { userId: foundUser._id, username, role: foundUser.role },
+        { userId: foundUser.id, username, role: foundUser.role },  // Using `id` instead of `_id`
         jwtSecret,
         {},
         (err, token) => {
-          if (err) res.status(500).json({ message: "Error en la generación del token" });
-          else {
-            res.cookie("token", token, { sameSite: "none", secure: true }).json({
-              id: foundUser._id,
-              role: foundUser.role,
-            });
-          }
+          if (err) return res.status(500).json({ message: "Error en la generación del token" });
+          
+          res.cookie("token", token, { sameSite: "none", secure: true }).json({
+            id: foundUser.id,  // Using `id` for SQL Server
+            role: foundUser.role,
+          });
         }
       );
     } else {
       res.status(401).json({ message: "Credenciales incorrectas" });
     }
-  } else {
-    res.status(404).json({ message: "Usuario no encontrado" });
+  } catch (err) {
+    res.status(500).json({ message: "Error en el servidor", error: err.message });
   }
 });
+
 
 app.post("/register", async (req, res) => {
   const { username, password } = req.body;
   try {
+    // Generar hash de la contraseña
     const hashedPassword = bcrypt.hashSync(password, bcryptSalt);
+    
+    // Crear el usuario en la base de datos
     const createdUser = await User.create({
       username: username,
       password: hashedPassword,
     });
+    
+    // Generar token JWT
     jwt.sign(
-      { userId: createdUser._id, username },
+      { userId: createdUser.id, username }, // Usar 'id' en lugar de '_id'
       jwtSecret,
       {},
       (err, token) => {
-        if (err) res.status(500).json({ message: "Error en la generación del token" });
-        else {
-          res.cookie("token", token, { sameSite: "none", secure: true }).status(201).json({
-            id: createdUser._id,
-          });
+        if (err) {
+          res.status(500).json({ message: "Error en la generación del token" });
+        } else {
+          // Enviar token en la cookie y devolver el id del usuario
+          res
+            .cookie("token", token, { sameSite: "none", secure: true })
+            .status(201)
+            .json({
+              id: createdUser.id,  // Usar 'id' en lugar de '_id'
+            });
         }
       }
     );
   } catch (err) {
-    res.status(500).json({ message: "Error al registrar el usuario" });
+    res.status(500).json({ message: "Error al registrar el usuario", error: err.message });
   }
 });
 
@@ -168,6 +244,7 @@ const notifyAllClients = (message) => {
   });
 };
 
+// Funcionalidades de WebSocket y manejo de mensajes
 wss.on("connection", (connection, req) => {
   function notifyAboutOnlinePeople() {
     [...wss.clients].forEach((client) => {
@@ -200,7 +277,7 @@ wss.on("connection", (connection, req) => {
 
   const cookies = req.headers.cookie;
   if (cookies) {
-    const tokenCookieString = cookies.split(";").find((str) => str.startsWith("token="));
+    const tokenCookieString = cookies.split(";").findAll((str) => str.startsWith("token="));
     if (tokenCookieString) {
       const token = tokenCookieString.split("=")[1];
       if (token) {
@@ -225,7 +302,7 @@ wss.on("connection", (connection, req) => {
       const filePath = path.join(__dirname, "/uploads/", filename);
       const bufferData = Buffer.from(file.data.split(",")[1], "base64");
       fs.writeFile(filePath, bufferData, () => {
-        console.log("file saved:" + filePath);
+        console.log("Archivo guardado:" + filePath);
       });
     }
     if (recipient && (text || file)) {
@@ -254,6 +331,7 @@ wss.on("connection", (connection, req) => {
   notifyAboutOnlinePeople();
 });
 
+
 // Report handling setup
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
@@ -267,100 +345,6 @@ const storage = multer.diskStorage({
 const upload = multer({ storage: storage });
 const baseUrl = process.env.BASE_URL || 'http://localhost:4040';
 
-app.post("/report", upload.array("image"), async (req, res) => {
-  try {
-    const { title, description, state, incidentDate } = req.body;
-    let imagePaths = [];
-
-    if (req.files) {
-      imagePaths = req.files.map((file) => file.path);
-    }
-
-    console.log("Incoming data:", { title, description, state, incidentDate, imagePaths });
-
-    const token = req.cookies?.token;
-    if (!token) {
-      console.log("No token provided.");
-      return res.status(401).json({ error: "User not authenticated" });
-    }
-
-    let decodedToken;
-    try {
-      decodedToken = jwt.verify(token, process.env.JWT_SECRET);
-    } catch (err) {
-      console.log("Invalid token:", err.message);
-      return res.status(401).json({ error: "Invalid token" });
-    }
-
-    const userId = decodedToken.userId;
-
-
-    const newReport = await Report.create({
-      title: title.trim(),
-      description: description.trim(),
-      state,
-      image: imagePaths,
-      incidentDate: new Date(incidentDate),
-      createdBy: userId,
-      createdAt: new Date(),
-    });
-
-    const reportWithDetails = {
-      ...newReport.toObject(),
-      createdBy: (await User.findById(userId)).username,
-      images: imagePaths.map((path) => `${baseUrl}/${path}`),
-    };
-
-
-
-    notifyAllClients({ type: "new-report", data: reportWithDetails });
-
-    res.status(201).json(reportWithDetails);
-
-    const recipients = ["raysell22@gmail.com"];
-
-    for (const recipient of recipients) {
-      await resend.emails.send({
-        from: "oasis@centromantenimineto.com",
-        to: recipient,
-        subject: `New Report - ${newReport.title}`,
-        html: `
-          <h1>New Report Submitted</h1>
-          <p><strong>Title:</strong> ${newReport.title}</p>
-          <p><strong>Description:</strong> ${newReport.description}</p>
-          <p><strong>State:</strong> ${newReport.state}</p>
-          <p><strong>Incident Date:</strong> ${newReport.incidentDate}</p>
-          <p><strong>Submitted by:</strong> ${userId}</p>
-          ${
-            imagePaths.length > 0
-              ? `<p><strong>Images:</strong> ${imagePaths
-                  .map((path) => `<img src="${baseUrl}/${path}" alt="Image" />`)
-                  .join("")}</p>`
-              : ""
-          }
-        `,
-      });
-    }
-  } catch (error) {
-    if (error.code === 11000 && error.keyPattern.title && error.keyPattern.description && error.keyPattern.incidentDate && error.keyPattern.createdBy) {
-      return res.status(400).json({ error: "Duplicate report submission" });
-    }
-    console.error("Error creating report:", error);
-
-    if (req.files) {
-      req.files.forEach((file) => {
-        try {
-          fs.unlinkSync(file.path);
-        } catch (unlinkError) {
-          console.error("Error removing file:", file.path, unlinkError);
-        }
-      });
-    }
-
-    res.status(500).json({ error: "Error creating report" });
-  }
-});
-
 // app.post("/report", upload.array("image"), async (req, res) => {
 //   try {
 //     const { title, description, state, incidentDate } = req.body;
@@ -370,65 +354,98 @@ app.post("/report", upload.array("image"), async (req, res) => {
 //       imagePaths = req.files.map((file) => file.path);
 //     }
 
+//     console.log("Incoming data:", { title, description, state, incidentDate, imagePaths });
+
 //     const token = req.cookies?.token;
 //     if (!token) {
 //       return res.status(401).json({ error: "User not authenticated" });
 //     }
 
-//     let decodedToken;
-//     try {
-//       decodedToken = jwt.verify(token, jwtSecret);
-//     } catch (err) {
-//       return res.status(401).json({ error: "Invalid token" });
-//     }
-
+//     const decodedToken = jwt.verify(token, process.env.JWT_SECRET);
 //     const userId = decodedToken.userId;
 
+//     // Ensure the date is formatted properly (YYYY-MM-DD)
+//     const formattedIncidentDate = new Date(incidentDate).toISOString().slice(0, 10); // 'YYYY-MM-DD'
+
+//     // Create the new report
 //     const newReport = await Report.create({
 //       title: title.trim(),
 //       description: description.trim(),
 //       state,
 //       image: imagePaths,
-//       incidentDate,
-//       user: userId,
+//       incidentDate: formattedIncidentDate,  // Use formatted date here
 //       createdBy: userId,
-//       createdAt: new Date()
 //     });
 
-//     io.emit("newReport", newReport);
+//     const reportWithDetails = {
+//       ...newReport.toJSON(),
+//       createdBy: (await User.findByPk(userId)).username,
+//       images: imagePaths.map((path) => `${baseUrl}/${path}`),
+//     };
 
-//     res.status(201).json({ message: "Report submitted successfully" });
-
-//     const recipients = ["raysell22@gmail.com"];
-
-//     for (const recipient of recipients) {
-//       await resend.emails.send({
-//         from: "oasis@centromantenimineto.com",
-//         to: recipient,
-//         subject: `New Report - ${newReport.title}`,
-//         html: `
-//           <h1>New Report Submitted</h1>
-//           <p><strong>Title:</strong> ${newReport.title}</p>
-//           <p><strong>Description:</strong> ${newReport.description}</p>
-//           <p><strong>State:</strong> ${newReport.state}</p>
-//           <p><strong>Incident Date:</strong> ${newReport.incidentDate}</p>
-//           <p><strong>Submitted by:</strong> ${userId}</p>
-//           ${
-//             imagePaths.length > 0
-//               ? `<p><strong>Images:</strong> ${imagePaths
-//                   .map((path) => `<img src="${baseUrl}/${path}" alt="Image" />`)
-//                   .join("")}</p>`
-//               : ""
-//           }
-//         `,
-//       });
-//     }
-//   } catch (err) {
-//     console.error("Error submitting report:", err);
-//     res.status(500).json({ error: "Internal server error" });
+//     res.status(201).json(reportWithDetails);
+//   } catch (error) {
+//     console.error("Error creating report:", error);
+//     res.status(500).json({ error: "Error creating report" });
 //   }
 // });
 
+ // Para formato de fecha más confiable
+
+app.post('/report', upload.array('image'), async (req, res) => {
+  try {
+    const { title, description, state, incidentDate, imagePaths } = req.body;
+
+    // Validar los campos
+    if (!title || !description || !incidentDate) {
+      return res.status(400).json({ error: 'Missing required fields: title, description, incidentDate' });
+    }
+
+    // Parsear la fecha y asegurar que esté en el formato correcto
+    const parsedDate = new Date(incidentDate);
+    if (isNaN(parsedDate.getTime())) {
+      return res.status(400).json({ error: 'Invalid date format' });
+    }
+
+    const formattedIncidentDate = format(parsedDate, 'yyyy-MM-dd HH:mm:ss'); // Formato compatible con SQL Server
+
+    const token = req.cookies?.token;
+    if (!token) {
+      return res.status(401).json({ error: 'User not authenticated' });
+    }
+
+    const decodedToken = jwt.verify(token, process.env.JWT_SECRET);
+    const userId = decodedToken.userId;
+
+    // Log de datos para revisar qué estamos enviando
+    console.log("Incoming data:", {
+      title,
+      description,
+      state,
+      formattedIncidentDate,
+      imagePaths,
+      createdBy: userId,
+    });
+
+    // Crear el reporte, asegurándonos que las imágenes se guarden como JSON válido
+    const newReport = await Report.create({
+      title: title.trim(),
+      description: description.trim(),
+      state,
+      image: JSON.stringify(imagePaths),  // Almacenar las imágenes como JSON
+      incidentDate: formattedIncidentDate, // Usar fecha formateada
+      createdBy: userId,
+      createdAt: Sequelize.fn('GETDATE'),  // Current timestamp
+      updatedAt: Sequelize.fn('GETDATE')   // Current timestamp
+    });
+
+    res.status(201).json(newReport);
+
+  } catch (error) {
+    console.error('Error creating report:', error);
+    res.status(500).json({ error: 'Error creating report' });
+  }
+});
 
 
 
@@ -441,36 +458,72 @@ app.get("/report", async (req, res) => {
     const decodedToken = jwt.verify(token, process.env.JWT_SECRET);
     const userId = decodedToken.userId;
 
-    const user = await User.findById(userId);
+    const user = await User.findByPk(userId);
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
 
     let reports;
+    const baseUrl = process.env.BASE_URL || 'http://localhost:4040';
+
+    // If the user is an admin, fetch all reports; otherwise, fetch only reports created by the user
     if (user.role === "admin") {
-      reports = await Report.find()
-        .populate("createdBy", "username")
-        .populate("comments.createdBy", "username");
+      reports = await Report.findAll({
+        include: [
+          {
+            model: User,
+            as: 'creator',  // Include the user who created the report
+            attributes: ['username'],
+          },
+          {
+            model: Comment,
+            as: 'comments',  // Include comments
+            include: {
+              model: User,  // Include the user who created each comment
+              as: 'creator',
+              attributes: ['username'],
+            }
+          }
+        ]
+      });
     } else {
-      reports = await Report.find({ createdBy: userId })
-        .populate("createdBy", "username")
-        .populate("comments.createdBy", "username");
+      reports = await Report.findAll({
+        where: { createdBy: userId },  // Filter by userId (creator)
+        include: [
+          {
+            model: User,
+            as: 'creator',
+            attributes: ['username'],
+          },
+          {
+            model: Comment,
+            as: 'comments',
+            include: {
+              model: User,
+              as: 'creator',
+              attributes: ['username'],
+            }
+          }
+        ]
+      });
     }
 
+    // Convert the reports to a format that can be easily returned as JSON
     const reportsWithDetails = reports.map((report) => ({
-      ...report.toObject(),
-      createdBy: report.createdBy.username,
+      ...report.toJSON(),  // Convert Sequelize instance to plain JSON
+      createdBy: report.creator.username,
       image: report.image ? `${baseUrl}${report.image}` : null,
     }));
 
     res.json(reportsWithDetails);
   } catch (error) {
-    console.error(error);
+    console.error("Error fetching reports:", error);
     res.status(500).json({ error: "Error fetching reports" });
   }
 });
 
-app.get("/reports", async (req, res) => {
+
+app.get("/report", async (req, res) => {
   try {
     const token = req.cookies?.token;
     if (!token) {
@@ -479,32 +532,43 @@ app.get("/reports", async (req, res) => {
     const decodedToken = jwt.verify(token, process.env.JWT_SECRET);
     const userId = decodedToken.userId;
 
-    const user = await User.findById(userId);
+    const user = await User.findByPk(userId);
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
 
-    const reports = await Report.find()
-      .populate("createdBy", "username")
-      .populate("comments.createdBy", "username");
+    let reports;
+    if (user.role === "admin") {
+      reports = await Report.findAll({
+        include: [
+          { model: User, as: 'creator', attributes: ['username'] },
+          { model: Comment, as: 'comments', include: [{ model: User, as: 'creator', attributes: ['username'] }] }
+        ],
+      });
+    } else {
+      reports = await Report.findAll({
+        where: { createdBy: userId },
+        include: [
+          { model: User, as: 'creator', attributes: ['username'] },
+          { model: Comment, as: 'comments', include: [{ model: User, as: 'creator', attributes: ['username'] }] }
+        ],
+      });
+    }
 
-    const reportsWithDetails = reports.map((report) => ({
-      ...report.toObject(),
-      createdBy: report.createdBy.username,
-      image: report.image ? `${baseUrl}${report.image}` : null,
-    }));
-
-    res.json(reportsWithDetails);
+    res.json(reports);
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Error fetching reports" });
   }
 });
 
+
+
+
 app.get("/report/:id", async (req, res) => {
   try {
     const reportId = req.params.id;
-    const report = await Report.findById(reportId);
+    const report = await Report.findByPk(reportId);
     if (!report) {
       return res.status(404).json({ error: "Report not found" });
     }
@@ -540,7 +604,7 @@ app.put("/report/:id", async (req, res) => {
     }
     const decodedToken = jwt.verify(token, process.env.JWT_SECRET);
     const userId = decodedToken.userId;
-    const user = await User.findById(userId);
+    const user = await User.findByPk(userId);
 
     if (user.role !== "admin") {
       return res
@@ -548,15 +612,21 @@ app.put("/report/:id", async (req, res) => {
         .json({ error: "User is not authorized to update report state" });
     }
 
-    const updatedReport = await Report.findByIdAndUpdate(
-      reportId,
+    const [updated] = await Report.update(
       { title, description, state, incidentDate },
-      { new: true }
+      { where: { id: reportId } }
     );
+    if (updated) {
+      const updatedReport = await Report.findByPk(reportId);
+      res.json(updatedReport);
+    } else {
+      res.status(404).send('Report not found');
+    }
+    
 
     const reportWithDetails = {
       ...updatedReport.toObject(),
-      createdBy: (await User.findById(updatedReport.createdBy)).username,
+      createdBy: (await User.findByPk(updatedReport.createdBy)).username,
       image: updatedReport.image ? `${baseUrl}${updatedReport.image}` : null,
     };
 
@@ -591,15 +661,22 @@ app.put("/mark-report-reviewed/:reportId", async (req, res) => {
   try {
     const reportId = req.params.reportId;
 
-    // Actualizar el estado del informe como revisado
-    await Report.findByIdAndUpdate(reportId, { state: "REVIEWED" });
+    // Find the report by its primary key and update its state
+    const report = await Report.findByPk(reportId);
+    if (!report) {
+      return res.status(404).json({ error: "Report not found" });
+    }
 
-    res.status(200).json({ message: "Informe marcado como revisado" });
+    report.state = "REVIEWED";
+    await report.save();
+
+    res.status(200).json({ message: "Report marked as reviewed" });
   } catch (error) {
-    console.error("Error marcando informe como revisado:", error);
-    res.status(500).json({ error: "Error marcando informe como revisado" });
+    console.error("Error marking report as reviewed:", error);
+    res.status(500).json({ error: "Error marking report as reviewed" });
   }
 });
+
 
 app.post("/report/:id/comment", async (req, res) => {
   try {
@@ -613,63 +690,63 @@ app.post("/report/:id/comment", async (req, res) => {
     const decodedToken = jwt.verify(token, process.env.JWT_SECRET);
     const userId = decodedToken.userId;
 
-    const report = await Report.findById(reportId);
+    // Find the report by its primary key
+    const report = await Report.findByPk(reportId);
     if (!report) {
       return res.status(404).json({ error: "Report not found" });
     }
 
-    const user = await User.findById(userId, "username");
-    if (!user) {
-      return res.status(404).json({ error: "User not found" });
-    }
-
-    const comment = {
+    // Create and add the comment
+    const comment = await Comment.create({
       text,
       createdBy: userId,
+      reportId,
       createdAt: new Date(),
-    };
-
-    report.comments.push(comment);
-    await report.save();
-
-    const newComment = report.comments[report.comments.length - 1];
-    newComment.createdBy = user;
+    });
 
     notifyAllClients({
       type: "new-comment",
-      data: { reportId, comment: newComment },
+      data: { reportId, comment },
     });
 
-    res.status(201).json(newComment);
+    res.status(201).json(comment);
   } catch (error) {
     console.error("Error adding comment:", error);
     res.status(500).json({ error: "Error adding comment" });
   }
 });
 
+
 app.get("/report/:id/comments", async (req, res) => {
   try {
     const reportId = req.params.id;
-    const report = await Report.findById(reportId).populate(
-      "comments.createdBy",
-      "username"
-    );
+
+    // Fetch the report along with its comments and user details
+    const report = await Report.findByPk(reportId, {
+      include: {
+        model: Comment,
+        include: { model: User, attributes: ["username"] }, // Include user details
+      },
+    });
+
     if (!report) {
       return res.status(404).json({ error: "Report not found" });
     }
-    res.status(200).json(report.comments);
+
+    res.status(200).json(report.Comments); // Sequelize automatically includes the comments
   } catch (error) {
     console.error("Error fetching comments:", error);
     res.status(500).json({ error: "Error fetching comments" });
   }
 });
 
+
 app.put("/report/:reportId/comment/:commentId", async (req, res) => {
   try {
     const { text } = req.body;
     const { reportId, commentId } = req.params;
 
-    const report = await Report.findById(reportId);
+    const report = await Report.findByPk(reportId);
     if (!report) {
       return res.status(404).json({ error: "Report not found" });
     }
@@ -688,7 +765,7 @@ app.put("/report/:reportId/comment/:commentId", async (req, res) => {
     comment.text = text;
     await report.save();
 
-    const user = await User.findById(decodedToken.userId, "username");
+    const user = await User.findByPk(decodedToken.userId, "username");
     comment.createdBy = user;
 
     io.to(reportId).emit("updateComment", comment); // Emitir evento a través de WebSocket
@@ -704,7 +781,7 @@ app.delete("/report/:reportId/comment/:commentId", async (req, res) => {
   try {
     const { reportId, commentId } = req.params;
 
-    const report = await Report.findById(reportId);
+    const report = await Report.findByPk(reportId);
     if (!report) {
       return res.status(404).json({ error: "Report not found" });
     }
@@ -735,7 +812,7 @@ app.get("/user/:userId/reports", async (req, res) => {
       return res.status(400).json({ error: "Invalid user ID" });
     }
 
-    const reports = await Report.find({ createdBy: userId });
+    const reports = await Report.findAll({ createdBy: userId });
 
     res.status(200).json(reports);
   } catch (error) {
@@ -759,12 +836,12 @@ async function assignReportAndNotify(reportId, userId) {
   }
 }
 
+
 /////////////////////////////////////////////////////////////////
 // iniciando la parte del Usuario (residente o administrador) //
 
 app.get("/users", async (req, res) => {
   try {
-    // Obtener el usuario desde el token de autenticación
     const token = req.cookies?.token;
     if (!token) {
       return res.status(401).json({ error: "User not authenticated" });
@@ -772,25 +849,24 @@ app.get("/users", async (req, res) => {
     const decodedToken = jwt.verify(token, process.env.JWT_SECRET);
     const userId = decodedToken.userId;
 
-    // Verificar el rol del usuario
-    const user = await User.findById(userId);
+    // Check the user's role
+    const user = await User.findByPk(userId);
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
 
-    // Si el usuario es administrador, devuelve todos los usuarios
     if (user.role === "admin") {
-      const users = await User.find();
+      const users = await User.findAll();  // Fetch all users for admin
       return res.json(users);
     } else {
-      // Si el usuario no es administrador, devuelve solo su propio usuario
-      return res.json([user]);
+      return res.json([user]);  // Non-admins only see their own info
     }
   } catch (error) {
-    console.error(error);
+    console.error("Error fetching users:", error);
     return res.status(500).json({ error: "Error fetching users" });
   }
 });
+
 
 app.post("/users", async (req, res) => {
   try {
@@ -816,13 +892,21 @@ app.post("/users", async (req, res) => {
 app.delete("/users/:id", async (req, res) => {
   try {
     const userId = req.params.id;
-    await User.findByIdAndDelete(userId);
+
+    // Find and delete the user by primary key
+    const user = await User.findByPk(userId);
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    await user.destroy();  // Delete the user
     res.status(200).json({ message: "User deleted successfully" });
   } catch (error) {
     console.error("Error deleting user:", error);
     res.status(500).json({ error: "Error deleting user" });
   }
 });
+
 
 app.put("/users/:userId", async (req, res) => {
   try {
@@ -852,7 +936,7 @@ app.put("/users/:userId", async (req, res) => {
 app.get("/users/:userId", async (req, res) => {
   try {
     const userId = req.params.userId;
-    const user = await User.findById(userId);
+    const user = await User.findByPk(userId);
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
@@ -865,43 +949,22 @@ app.get("/users/:userId", async (req, res) => {
 
 app.get("/user", async (req, res) => {
   try {
-    const userData = await getUserDataFromRequest(req);
-    const userId = userData.userId;
-    const user = await User.findById(userId);
+    const token = req.cookies?.token;
+    if (!token) {
+      return res.status(401).json({ error: "User not authenticated" });
+    }
+
+    const decodedToken = jwt.verify(token, process.env.JWT_SECRET);
+    const user = await User.findByPk(decodedToken.userId);
+    
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
+
     res.json(user);
   } catch (error) {
-    console.error(error);
+    console.error("Error fetching user data:", error);
     res.status(500).json({ error: "Error fetching user data" });
-  }
-});
-
-app.post("/change-password", authenticateJWT, async (req, res) => {
-  try {
-    const { currentPassword, newPassword } = req.body;
-    const userId = req.user.userId;
-
-    const user = await User.findById(userId);
-    if (!user) {
-      return res.status(404).json({ error: "User not found" });
-    }
-
-    const passwordMatch = await bcrypt.compare(currentPassword, user.password);
-    if (!passwordMatch) {
-      return res.status(401).json({ error: "Incorrect current password" });
-    }
-
-    const hashedNewPassword = await bcrypt.hash(newPassword, bcryptSalt);
-
-    user.password = hashedNewPassword;
-    await user.save();
-
-    res.json({ message: "Password updated successfully" });
-  } catch (error) {
-    console.error("Error updating password:", error);
-    res.status(500).json({ error: "Error updating password" });
   }
 });
 
@@ -1008,7 +1071,7 @@ const authenticateUser = (req, res, next) => {
 app.get("/user/me", authenticateUser, async (req, res) => {
   try {
     const userId = req.userId;
-    const user = await User.findById(userId).select("-password"); // Excluir el campo de la contraseña
+    const user = await User.findByPk(userId).select("-password"); // Excluir el campo de la contraseña
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
@@ -1024,7 +1087,7 @@ app.get("/user/me", authenticateUser, async (req, res) => {
 app.get("/recent-messages", authenticateJWT, async (req, res) => {
   try {
     const userId = req.user.userId; // Ahora puedes acceder a req.user
-    const recentMessages = await Message.find({ recipient: userId })
+    const recentMessages = await Message.findAll({ recipient: userId })
       .sort({ createdAt: -1 })
       .limit(5);
     res.json(recentMessages);
@@ -1034,18 +1097,36 @@ app.get("/recent-messages", authenticateJWT, async (req, res) => {
   }
 });
 
-async function authenticateJWT(req, res, next) {
+
+
+// Use in routes like:
+app.get("/user/me", authenticateJWT, (req, res) => {
+  res.json(req.user);
+});
+
+app.post("/change-password", authenticateJWT, async (req, res) => {
   try {
-    const token = req.cookies?.token;
-    if (token) {
-      const decodedToken = jwt.verify(token, jwtSecret);
-      req.user = decodedToken;
-      next();
-    } else {
-      throw new Error("Token not provided");
+    const { currentPassword, newPassword } = req.body;
+    const userId = req.user.userId;
+
+    const user = await User.findByPk(userId);
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
     }
+
+    const passwordMatch = await bcrypt.compare(currentPassword, user.password);
+    if (!passwordMatch) {
+      return res.status(401).json({ error: "Incorrect current password" });
+    }
+
+    const hashedNewPassword = await bcrypt.hash(newPassword, bcryptSalt);
+
+    user.password = hashedNewPassword;
+    await user.save();
+
+    res.json({ message: "Password updated successfully" });
   } catch (error) {
-    console.error("Authentication error:", error);
-    res.status(401).json({ error: "Authentication failed" });
+    console.error("Error updating password:", error);
+    res.status(500).json({ error: "Error updating password" });
   }
-}
+});

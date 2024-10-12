@@ -1,5 +1,5 @@
-const Report = require("../models/Report");
-const User = require("../models/User");
+const Report = require("../Models/Report");
+const User = require("../Models/User");
 const fs = require("fs");
 const path = require("path");
 const jwt = require("jsonwebtoken");

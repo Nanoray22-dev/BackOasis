@@ -1,12 +1,35 @@
-const mongoose = require('mongoose');
+const { Sequelize, DataTypes } = require('sequelize');
+const sequelize = require('../Config/db');
+const User = require('./User');
 
-const MessageSchema = new mongoose.Schema({
-  sender: {type: mongoose.Schema.Types.ObjectId, ref: 'User'},
-  recipient: {type: mongoose.Schema.Types.ObjectId, ref: 'User'},
-  text: String,
-  file: String,
-}, {timestamps:true});
+const Message = sequelize.define('Message', {
+  id: {
+    type: DataTypes.INTEGER,
+    autoIncrement: true,
+    primaryKey: true,
+  },
+  text: {
+    type: DataTypes.STRING(255),
+    allowNull: true,
+  },
+  fileName: {
+    type: DataTypes.STRING(255),
+    allowNull: true,  // Path to the file, if any
+  },
+  createdAt: {
+    type: DataTypes.DATE,
+    defaultValue: Sequelize.literal('GETDATE()'),
+  },
+  updatedAt: {
+    type: DataTypes.DATE,
+    defaultValue: Sequelize.literal('GETDATE()'),
+  },
+}, {
+  timestamps: true,
+});
 
-const MessageModel = mongoose.model('Message', MessageSchema);
+// Relationships
+Message.belongsTo(User, { foreignKey: 'senderId', as: 'sender' });
+Message.belongsTo(User, { foreignKey: 'recipientId', as: 'recipient' });
 
-module.exports = MessageModel;
+module.exports = Message;
